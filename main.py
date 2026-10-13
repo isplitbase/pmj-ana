@@ -153,14 +153,24 @@ def analyze():
                        pages=[{"no": i + 1, "type": n} for i, n in enumerate(cls["names"])])
         # 2. 今期だけか、今期・前期か(getpdfinfo と同じ)
         log = []
-        try:
-            per = period.detect_upload_key([p for p, t in zip(png_paths, types) if t == "1"] or target,
-                                           runner.openai_keys()[0])
-            upload_key = per["upload_key"]
-            log.append("期の判定: %s → %s" % (per["labels"], upload_key))
-        except Exception as e:
+        # 一時的な失敗(API の混雑・起動待ち)で「今期のみ」になって前期が空のまま成功しないよう、
+        # 失敗したら 15 秒待って 1 回やり直す。それでも失敗したら今期のみで続ける 2026-10-13
+        per_pages = [p for p, t in zip(png_paths, types) if t == "1"] or target
+        upload_key = None
+        for n in range(2):
+            try:
+                per = period.detect_upload_key(per_pages, runner.openai_keys()[0])
+                upload_key = per["upload_key"]
+                log.append("期の判定: %s → %s" % (per["labels"], upload_key))
+                break
+            except Exception as e:
+                if n == 0:
+                    log.append("期の判定に失敗したため 15 秒後にやり直し: %s" % str(e)[:200])
+                    time.sleep(15)
+                else:
+                    log.append("期の判定に失敗したため今期のみとして読み取り: %s" % str(e)[:200])
+        if upload_key is None:
             upload_key = "currentTermBalanceSheet"
-            log.append("期の判定に失敗したため今期のみとして読み取り: %s" % str(e)[:200])
         # 3. 読み取り(ana 本番の callgpt.py)
         r = runner.run_callgpt(png_paths, types, upload_key, job_dir)
         if not r["ok"]:
